@@ -6,7 +6,7 @@
 
 ## What is this?
 
-Neural networks suddenly transition during training—grokking (instant generalization after epochs of overfitting), double descent (test error rises then falls), and critical learning periods. SHLD gives you **C(t)**, a single number that predicts these transitions before they happen.
+Neural networks suddenly transition during training—**grokking** (instant generalization after epochs of overfitting), **double descent** (test error rises then falls), and **critical learning periods**. This framework gives you **C(t)**, a single number that predicts these transitions before they happen.
 
 **C(t) = ||∇L||² / (2D·d)**
 
@@ -111,6 +111,7 @@ for epoch in range(1000):
 - **Diffusion term** (√(2D)·ξ): Explores landscape via noise
 
 The **stationary distribution** is Gibbs measure:
+
 π(θ) ∝ exp(-L(θ)/D)
 
 This means SGD naturally prefers **flat minima** (implicit regularization) when D > 0.
@@ -120,11 +121,13 @@ This means SGD naturally prefers **flat minima** (implicit regularization) when 
 ## Predictions
 
 ### 1. Grokking
+
 - **Signal**: C(t) drops sharply (>50% decrease)
 - **Lead time**: ~200 epochs before generalization
 - **Intervention**: Increase α when C < 2 to accelerate
 
 ### 2. Double Descent
+
 - **Underparameterized** (n < d): C → ∞, standard overfitting
 - **Interpolation threshold** (n ≈ d): **C collapses**, unstable generalization
 - **Overparameterized** (n >> d): C stabilizes, flat minima dominate
@@ -136,21 +139,27 @@ This means SGD naturally prefers **flat minima** (implicit regularization) when 
 Where λ_max is the largest Hessian eigenvalue. This balances diffusion strength against landscape curvature.
 
 ```python
-def estimate_optimal_lr(model, data_sample, current_lr, current_D):
+def estimate_optimal_lr(model, data_sample, current_D):
+    """Estimate optimal learning rate from landscape geometry"""
     # Power iteration for largest eigenvalue
-    v = torch.randn_like(torch.nn.utils.parameters_to_vector(model.parameters()))
+    params = list(model.parameters())
+    v = torch.randn_like(torch.nn.utils.parameters_to_vector(params))
     
     for _ in range(10):
         v = v / v.norm()
-        # Hessian-vector product
+        
+        # Compute Hessian-vector product
         loss = model(data_sample).mean()
-        grads = torch.autograd.grad(loss, model.parameters(), create_graph=True)
+        grads = torch.autograd.grad(loss, params, create_graph=True)
         grad_vector = torch.cat([g.flatten() for g in grads])
-        Hv = torch.autograd.grad(grad_vector @ v, model.parameters())
-        v = torch.cat([g.flatten() for g in Hv])
+        
+        Hv_grads = torch.autograd.grad(grad_vector @ v, params)
+        v = torch.cat([g.flatten() for g in Hv_grads])
     
-    lambda_max = (v @ torch.autograd.grad(grad_vector @ v, model.parameters())).item()
-    return 2 * current_D / lambda_max
+    # Rayleigh quotient for eigenvalue
+    lambda_max = v.norm().item()
+    
+    return 2 * current_D / (lambda_max + 1e-12)
 ```
 
 ---
@@ -167,15 +176,21 @@ When stuck (C < 0.5, loss plateau):
 3. Return to normal α after escape
 
 ```python
-if C < 0.5 and loss_plateau_detected():
-    original_lr = optimizer.param_groups[0]['lr']
-    optimizer.param_groups[0]['lr'] *= 3.0  # Boost
-    
-    # Train for 100 steps
-    for _ in range(100):
-        # ... normal training step ...
-    
-    optimizer.param_groups[0]['lr'] = original_lr  # Restore
+def escape_intervention(optimizer, C, loss_history, threshold=0.5, window=100):
+    """Detect stagnation and boost learning rate"""
+    if C < threshold and is_plateau(loss_history, window):
+        original_lr = optimizer.param_groups[0]['lr']
+        optimizer.param_groups[0]['lr'] *= 3.0
+        print(f"Kramers boost: LR {original_lr:.6f} → {original_lr*3:.6f}")
+        return True, original_lr
+    return False, None
+
+def is_plateau(loss_history, window=100):
+    """Check if loss has stagnated"""
+    if len(loss_history) < window:
+        return False
+    recent = loss_history[-window:]
+    return (max(recent) - min(recent)) / (abs(recent[0]) + 1e-8) < 0.01
 ```
 
 ---
@@ -185,13 +200,13 @@ if C < 0.5 and loss_plateau_detected():
 ### Batch Size Scaling
 ```python
 # Maintain constant D when changing batch size
-new_lr = old_lr * sqrt(B_new / B_old)
+new_lr = old_lr * (B_new / B_old) ** 0.5
 ```
 
 ### Architecture Depth Scaling
 ```python
 # Compensate for gradient scaling with depth
-new_lr = old_lr * sqrt(L_old / L_new)
+new_lr = old_lr * (L_old / L_new) ** 0.5
 ```
 
 ---
@@ -263,7 +278,7 @@ if C > 100 and not decreasing:
     # Converging to sharp minimum (overfit risk)
     print("ACTION: Add regularization or reduce LR")
     
-if C_change > 0.5 * C_prev:
+if abs(C - C_prev) / C_prev > 0.5:
     # Sharp drop detected
     print("ALERT: Phase transition in next 10-20% of training")
 ```
@@ -274,7 +289,14 @@ if C_change > 0.5 * C_prev:
 # With Weights & Biases
 import wandb
 
-if step % 100 == 0 and optimizer.D is not None:
+if step % 100 == 0 and hasattr(optimizer, 'D') and optimizer.D is not None:
+    # Compute C(t)
+    grad_norm_sq = sum(p.grad.pow(2).sum().item() 
+                      for p in model.parameters() 
+                      if p.grad is not None)
+    d = sum(p.numel() for p in model.parameters())
+    C = grad_norm_sq / (2 * optimizer.D * d + 1e-12)
+    
     wandb.log({
         "C(t)": C,
         "D": optimizer.D,
@@ -289,7 +311,7 @@ if step % 100 == 0 and optimizer.D is not None:
 
 1. **Gaussian Approximation**: Real SGD has heavy-tailed gradient noise (especially early training)
 2. **Full-Batch Requirement**: Exact C(t) needs full gradients (expensive for large models)
-   - Solution: Use mini-batch variance estimator with running average
+   - **Solution**: Use mini-batch variance estimator with running average
 3. **Discrete-Time Effects**: Large learning rates violate continuous-time assumptions
 4. **Architecture Dependence**: Optimal C(t) targets may vary (CNNs vs. Transformers)
 
@@ -303,6 +325,18 @@ if step % 100 == 0 and optimizer.D is not None:
 - Can we design optimizers that directly control C(t)?
 
 ---
+
+## Citation
+
+```bibtex
+@article{consolidation2024,
+  title={Consolidation Ratio: A Unified Signal-to-Noise Metric for Predicting 
+         and Steering Grokking, Double Descent, and Neural Phase Transitions},
+  author={Anonymous},
+  journal={arXiv preprint arXiv:XXXX.XXXXX},
+  year={2024}
+}
+```
 
 ---
 
@@ -319,4 +353,17 @@ if step % 100 == 0 and optimizer.D is not None:
 - Nakkiran, P. et al. (2021). Deep double descent. JMLR.
 - Li, H. et al. (2018). Visualizing the loss landscape of neural nets. NeurIPS.
 
+---
 
+## Contributing
+
+Priority areas:
+- JAX/Flax implementations
+- Non-Gaussian noise corrections (Lévy-stable distributions)
+- Transformer-specific validation
+- Real-time dashboard (Streamlit/Gradio)
+- LLM emergent ability prediction
+
+---
+
+**One-liner**: SGD is Brownian motion in the loss landscape, and C(t) measures whether gradient signal or stochastic noise dominates—when they balance at C≈1, the system becomes critical and phase transitions occur.
