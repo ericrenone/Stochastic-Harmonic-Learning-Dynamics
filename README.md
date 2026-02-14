@@ -1,6 +1,6 @@
 # Geometric Lévy Dynamics in Deep Learning
 
-**Rigorous framework: neural network phase transitions emerge from synchronized criticality across noise, stability, and representation geometry**
+**Neural network phase transitions emerge from synchronized criticality across noise, stability, and representation geometry**
 
 ---
 
