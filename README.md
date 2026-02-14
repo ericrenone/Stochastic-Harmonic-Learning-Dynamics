@@ -1,4 +1,4 @@
-# SHLD: Consolidation Ratio for Neural Network Phase Transitions
+# Consolidation Ratio for Neural Network Phase Transitions
 
 **Predict grokking, double descent, and optimal learning rates using one metric**
 
