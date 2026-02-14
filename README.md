@@ -1,6 +1,6 @@
-# LEVBOT: Geometric Lévy Dynamics and Criticality in Deep Learning
+# Geometric Lévy Dynamics and Criticality in Deep Learning
 
-*A unified information-geometric theory of learning phase transitions driven by heavy-tailed stochastic optimization*
+*LEVBOT is a unified information-geometric theory modeling deep learning as Lévy-driven stochastic flow on curved manifolds, where heavy-tailed optimization noise and curvature jointly trigger phase transitions in representation learning*
 
 ---
 
