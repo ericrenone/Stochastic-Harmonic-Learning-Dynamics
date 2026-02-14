@@ -366,4 +366,6 @@ Priority areas:
 
 ---
 
-## SGD is Brownian motion in the loss landscape, and C(t) measures whether gradient signal or stochastic noise dominates—when they balance at C≈1, the system becomes critical and phase transitions occur.
+## Conclusion
+
+SGD is Brownian motion in the loss landscape, and C(t) measures whether gradient signal or stochastic noise dominates—when they balance at C≈1, the system becomes critical and phase transitions occur.
